@@ -1,9 +1,3 @@
-# Blotato Comment System — Take-Home
-
-A multi-platform comment retrieval/reply system for a social media scheduling API, built as
-described in the take-home prompt. See [`docs/API_DESIGN.md`](docs/API_DESIGN.md) for the full
-endpoint spec.
-
 ## Quick start
 
 ```bash
@@ -92,10 +86,3 @@ Since the prompt intentionally leaves details open, here's what I assumed:
 - Idempotency keys on the reply endpoint, since retrying a failed reply request risks double-posting
   to the actual platform (unlike a normal internal write, this one has an external side effect).
 
-## AI usage disclosure
-
-I used Claude to speed up boilerplate (Express/Prisma scaffolding, mock adapter data generation)
-while I drove the architecture decisions myself — the adapter pattern, the caching strategy,
-the pagination approach, and the schema design were my calls, reasoned through against the
-prompt's stated constraint that the system already supports multiple platforms and needs to keep
-supporting more.
