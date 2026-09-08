@@ -1,0 +1,111 @@
+// Blotato Comment System — Database Schema
+// Design goals:
+//  - One internal "Post" can be published to N social platforms (already true in Blotato's product).
+//  - Comments belong to a specific (platform, external post) pair, not to the internal Post directly,
+//    because comment IDs/threads are platform-specific and never shared across platforms.
+//  - Comments support nested replies via a self-referential parentId (adjacency list — simplest model
+//    for a system where thread depth is usually shallow, 1-2 levels on most social platforms).
+//  - We cache comments locally (rather than always hitting the platform API) so reads are fast and
+//    we can serve pagination without re-fetching from YouTube/LinkedIn/etc on every request.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  YOUTUBE
+  LINKEDIN
+  TWITTER
+  FACEBOOK
+  INSTAGRAM
+  TIKTOK
+}
+
+/// A Blotato user account.
+model Account {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  connections SocialConnection[]
+  posts       Post[]
+}
+
+/// OAuth credentials for one (account, platform) pair.
+/// Kept separate from Post/PlatformPost so token refresh logic is isolated
+/// and a single connection can be reused across many posts.
+model SocialConnection {
+  id               String   @id @default(cuid())
+  accountId        String
+  platform         Platform
+  externalAccountId String  // the user's ID *on that platform*
+  accessToken      String   // should be encrypted at rest in a real system
+  refreshToken     String?
+  expiresAt        DateTime?
+  createdAt        DateTime @default(now())
+
+  account       Account        @relation(fields: [accountId], references: [id])
+  platformPosts PlatformPost[]
+
+  @@unique([accountId, platform])
+}
+
+/// An internal, platform-agnostic post the user composed in Blotato.
+model Post {
+  id        String   @id @default(cuid())
+  accountId String
+  content   String
+  createdAt DateTime @default(now())
+
+  account       Account        @relation(fields: [accountId], references: [id])
+  platformPosts PlatformPost[]
+}
+
+/// The result of publishing one internal Post to one platform.
+/// This is the join point between our internal post and the platform's own post ID —
+/// comments always attach here, never to Post directly, since a post published to
+/// YouTube and LinkedIn has two totally separate comment threads.
+model PlatformPost {
+  id               String   @id @default(cuid())
+  postId           String
+  socialConnectionId String
+  platform         Platform
+  externalPostId   String   // the post ID on the platform's own system
+  publishedAt      DateTime @default(now())
+
+  post       Post             @relation(fields: [postId], references: [id])
+  connection SocialConnection @relation(fields: [socialConnectionId], references: [id])
+  comments   Comment[]
+
+  @@unique([platform, externalPostId])
+  @@index([postId])
+}
+
+/// A comment, normalized across platforms, cached locally.
+/// parentId enables nested replies (both ours and the platform's own threads).
+model Comment {
+  id                 String   @id @default(cuid())
+  platformPostId     String
+  externalCommentId  String   // comment ID as given by the platform
+  parentId           String?  // internal FK — null for top-level comments
+  externalParentId   String?  // parent's *external* ID, kept for re-sync/debugging
+  authorName         String
+  authorExternalId   String?
+  content            String
+  createdAtPlatform  DateTime // when the comment was created on the platform
+  syncedAt           DateTime @default(now()) // when we last pulled it into our cache
+  isOwnReply         Boolean  @default(false) // true if this comment was posted *by us* via the reply endpoint
+
+  platformPost PlatformPost @relation(fields: [platformPostId], references: [id])
+  parent       Comment?     @relation("CommentReplies", fields: [parentId], references: [id])
+  replies      Comment[]    @relation("CommentReplies")
+
+  @@unique([platformPostId, externalCommentId])
+  @@index([platformPostId, createdAtPlatform])
+  @@index([parentId])
+}
